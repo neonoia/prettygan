@@ -17,7 +17,7 @@ from models import *
 from utils import *
 from datasets import *
 from vgg16 import *
-from loss import *
+from histogram import *
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -53,15 +53,14 @@ opt = parser.parse_args()
 print(opt)
 
 # Create sample and checkpoint directories
-os.makedirs("images/%s" % opt.dataset_name, exist_ok=True)
-os.makedirs("saved_models/%s" % opt.dataset_name, exist_ok=True)
+os.makedirs("images/%s" % opt.makeup_part, exist_ok=True)
+os.makedirs("saved_models/%s" % opt.makeup_part, exist_ok=True)
 
 # Losses
-criterion_GAN = torch.nn.MSELoss()
 criterion_adv = torch.nn.MSELoss()
 criterion_cycle = torch.nn.L1Loss()
-criterion_identity = torch.nn.L1Loss()
 criterion_perceptual = torch.nn.MSELoss()
+criterion_l2 = torch.nn.MSELoss()
 vgg = VGG16(requires_grad=False)
 
 cuda = torch.cuda.is_available()
@@ -74,18 +73,21 @@ D_A = Discriminator(input_shape)
 D_B = Discriminator(input_shape)
 
 if cuda:
+    print("cuda enabled")
     G = G.cuda()
     D_A = D_A.cuda()
     D_B = D_B.cuda()
-    criterion_GAN.cuda()
+    vgg = vgg.cuda()
+    criterion_adv.cuda()
     criterion_cycle.cuda()
-    criterion_identity.cuda()
+    criterion_perceptual.cuda()
+    criterion_l2.cuda()
 
 if opt.epoch != 0:
     # Load pretrained models
-    G.load_state_dict(torch.load("saved_models/%s/G_%d.pth" % (opt.dataset_name, opt.epoch)))
-    D_A.load_state_dict(torch.load("saved_models/%s/D_A_%d.pth" % (opt.dataset_name, opt.epoch)))
-    D_B.load_state_dict(torch.load("saved_models/%s/D_B_%d.pth" % (opt.dataset_name, opt.epoch)))
+    G.load_state_dict(torch.load("saved_models/%s/G_%d.pth" % (opt.makeup_part, opt.epoch)))
+    D_A.load_state_dict(torch.load("saved_models/%s/D_A_%d.pth" % (opt.makeup_part, opt.epoch)))
+    D_B.load_state_dict(torch.load("saved_models/%s/D_B_%d.pth" % (opt.makeup_part, opt.epoch)))
 else:
     # Initialize weights
     G.apply(weights_init_normal)
@@ -98,15 +100,15 @@ optimizer_D_A = torch.optim.Adam(D_A.parameters(), lr=opt.lr, betas=(opt.b1, opt
 optimizer_D_B = torch.optim.Adam(D_B.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
 
 # Learning rate update schedulers
-lr_scheduler_G = torch.optim.lr_scheduler.LambdaLR(
-    optimizer_G, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
-)
-lr_scheduler_D_A = torch.optim.lr_scheduler.LambdaLR(
-    optimizer_D_A, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
-)
-lr_scheduler_D_B = torch.optim.lr_scheduler.LambdaLR(
-    optimizer_D_B, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
-)
+# lr_scheduler_G = torch.optim.lr_scheduler.LambdaLR(
+#     optimizer_G, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
+# )
+# lr_scheduler_D_A = torch.optim.lr_scheduler.LambdaLR(
+#     optimizer_D_A, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
+# )
+# lr_scheduler_D_B = torch.optim.lr_scheduler.LambdaLR(
+#     optimizer_D_B, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
+# )
 
 Tensor = torch.cuda.FloatTensor if cuda else torch.Tensor
 
@@ -150,7 +152,7 @@ def sample_images(batches_done):
     fake_B = make_grid(fake_B, nrow=5, normalize=True)
     # Arange images along y-axis
     image_grid = torch.cat((real_A, fake_B, real_B, fake_A), 1)
-    save_image(image_grid, "images/%s/%s.png" % (opt.dataset_name, batches_done), normalize=False)
+    save_image(image_grid, "images/%s/%s.png" % (opt.makeup_part, batches_done), normalize=False)
 
 if opt.makeup_part == "face":
     lambda_makeup = opt.lambda_face
@@ -162,8 +164,8 @@ for epoch in range(opt.epoch, opt.n_epochs):
         # Set model input
         real_A = Variable(batch["A"].type(Tensor))
         real_B = Variable(batch["B"].type(Tensor))
-        real_A_mask = Variable(batch["B"].type(Tensor))
-        real_B_mask = Variable(batch["B"].type(Tensor))
+        real_A_mask = Variable(batch["A_mask"].type(Tensor))
+        real_B_mask = Variable(batch["B_mask"].type(Tensor))
 
         # Adversarial ground truths
         valid = Variable(Tensor(np.ones((real_A.size(0), *D_A.output_shape))), requires_grad=False)
@@ -179,8 +181,8 @@ for epoch in range(opt.epoch, opt.n_epochs):
 
         # Adversarial loss
         fake_B, fake_A = G(real_A, real_B)
-        loss_adv_A = criterion_adv(D_B(fake_B), valid)
-        loss_adv_B = criterion_adv(D_A(fake_A), valid)
+        loss_adv_A = criterion_adv(D_A(fake_A), valid)
+        loss_adv_B = criterion_adv(D_B(fake_B), valid)
         loss_adv = loss_adv_A + loss_adv_B
 
         # Perceptual loss
@@ -195,13 +197,26 @@ for epoch in range(opt.epoch, opt.n_epochs):
         loss_cycle = loss_cycle_A + loss_cycle_B
 
         # Histogram loss
-        channels_A = list(torch.split(real_A, 1, 1))
+        channels_A = list(torch.split(fake_B, 1, 1))
         channels_B = list(torch.split(real_B, 1, 1))
-        
-        loss_hist_red = criterion_histogram(channels_A[0], channels_B[0], real_A_mask, real_B_mask)
-        loss_hist_green = criterion_histogram(channels_A[1], channels_B[1], real_A_mask, real_B_mask)
-        loss_hist_blue = criterion_histogram(channels_A[2], channels_B[2], real_A_mask, real_B_mask)
-        loss_makeup = loss_hist_red + loss_hist_green + loss_hist_blue
+
+        src_mask = real_A_mask > 0
+        ref_mask = real_B_mask > 0
+
+        src_masked_1 = torch.masked_select(channels_A[0], src_mask)
+        src_masked_2 = torch.masked_select(channels_A[1], src_mask)
+        src_masked_3 = torch.masked_select(channels_A[2], src_mask)
+        temp_src = torch.cat([src_masked_1.unsqueeze(0), src_masked_2.unsqueeze(0)], 0)
+        src_masked = torch.cat([temp_src, src_masked_3.unsqueeze(0)], 0)
+
+        ref_masked_1 = torch.masked_select(channels_B[0], ref_mask)
+        ref_masked_2 = torch.masked_select(channels_B[1], ref_mask)
+        ref_masked_3 = torch.masked_select(channels_B[2], ref_mask)
+        temp_ref = torch.cat([ref_masked_1.unsqueeze(0), ref_masked_2.unsqueeze(0)], 0)
+        ref_masked = torch.cat([temp_ref, ref_masked_3.unsqueeze(0)], 0)
+
+        src_matched = histogram_matching_cuda(src_masked.unsqueeze(0), ref_masked.unsqueeze(0))
+        loss_makeup = criterion_l2(src_masked.unsqueeze(0), src_matched)
 
         # Total loss
         loss_G = opt.lambda_adv * loss_adv + opt.lambda_cyc * loss_cycle + opt.lambda_per * loss_perceptual + lambda_makeup * loss_makeup
@@ -278,12 +293,12 @@ for epoch in range(opt.epoch, opt.n_epochs):
             sample_images(batches_done)
 
     # Update learning rates
-    lr_scheduler_G.step()
-    lr_scheduler_D_A.step()
-    lr_scheduler_D_B.step()
+    # lr_scheduler_G.step()
+    # lr_scheduler_D_A.step()
+    # lr_scheduler_D_B.step()
 
     if opt.checkpoint_interval != -1 and epoch % opt.checkpoint_interval == 0:
         # Save model checkpoints
-        torch.save(G.state_dict(), "saved_models/%s/G_%d.pth" % (opt.dataset_name, epoch))
-        torch.save(D_A.state_dict(), "saved_models/%s/D_A_%d.pth" % (opt.dataset_name, epoch))
-        torch.save(D_B.state_dict(), "saved_models/%s/D_B_%d.pth" % (opt.dataset_name, epoch))
+        torch.save(G.state_dict(), "saved_models/%s/G_%d.pth" % (opt.makeup_part, epoch))
+        torch.save(D_A.state_dict(), "saved_models/%s/D_A_%d.pth" % (opt.makeup_part, epoch))
+        torch.save(D_B.state_dict(), "saved_models/%s/D_B_%d.pth" % (opt.makeup_part, epoch))

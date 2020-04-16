@@ -64,14 +64,24 @@ class Generator(nn.Module):
 
         # Residual blocks
         res_block = []
-        res_features = out_features * 2
+        out_features = out_features * 4
         for _ in range(num_residual_blocks):
-            res_block += [ResidualBlock(res_features)]
+            res_block += [ResidualBlock(out_features)]
         
         self.res_block = nn.Sequential(*res_block)
 
         # Upsampling
+        in_features = out_features
+
         upsampling = []
+        for _ in range(2):
+            out_features //= 2
+            upsampling += [
+                nn.Conv2d(in_features, out_features, 3, stride=1, padding=1),
+                nn.InstanceNorm2d(out_features),
+                nn.ReLU(inplace=True),
+            ]
+            in_features = out_features
         for _ in range(2):
             out_features //= 2
             upsampling += [
@@ -86,17 +96,16 @@ class Generator(nn.Module):
         upsampling += [nn.ReflectionPad2d(channels), nn.Conv2d(out_features, channels, 7), nn.Tanh()]
 
         self.src_u = nn.Sequential(*upsampling)
-        self.ref_u = nn.Sequential(*upsampling)
 
-    def forward(self, src, ref):
+    def forward(self, src, ref_e, ref_l, ref_f):
         src_1 = self.src_d(src)
-        ref_1 = self.ref_d(ref)
-        input_res = torch.cat([src_1, ref_1], 1)
+        ref_1 = self.ref_d(ref_e)
+        ref_2 = self.ref_d(ref_l)
+        ref_3 = self.ref_d(ref_f)
+        input_res = torch.cat([src_1, ref_1, ref_2, ref_3], 1)
         output_res = self.res_block(input_res)
-        input_u = list(torch.split(output_res, 128, 1))
-        src_2 = self.src_u(input_u[0])
-        ref_2 = self.ref_u(input_u[1])
-        return src_2, ref_2
+        out = self.src_u(output_res)
+        return out
 
 
 # DISCRIMINATOR

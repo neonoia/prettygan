@@ -4,6 +4,32 @@ from torch.utils.cpp_extension import load
 
 cpp = torch.utils.cpp_extension.load(name="histogram_cpp", sources=["histogram.cpp", "histogram.cu"])
 
+def mask_regions(src, ref, src_mask, ref_mask):
+    src = src.data.clone()
+    ref = ref.data.clone()
+
+    channels_A = list(torch.split(src, 1, 1))
+    channels_B = list(torch.split(ref, 1, 1))
+
+    src_mask = src_mask > 0
+    ref_mask = ref_mask > 0
+
+    src_masked_1 = torch.masked_select(channels_A[0], src_mask)
+    src_masked_2 = torch.masked_select(channels_A[1], src_mask)
+    src_masked_3 = torch.masked_select(channels_A[2], src_mask)
+    src_masked = torch.cat([src_masked_1.unsqueeze(0), src_masked_2.unsqueeze(0), src_masked_3.unsqueeze(0)], 0)
+
+    ref_masked_1 = torch.masked_select(channels_B[0], ref_mask)
+    ref_masked_2 = torch.masked_select(channels_B[1], ref_mask)
+    ref_masked_3 = torch.masked_select(channels_B[2], ref_mask)
+    ref_masked = torch.cat([ref_masked_1.unsqueeze(0), ref_masked_2.unsqueeze(0), ref_masked_3.unsqueeze(0)], 0)
+
+    return src_masked, ref_masked
+
+# ----------------------
+#  Numpy Histogram Crit
+# ----------------------
+
 def find_nearest_above(my_array, target):
     diff = my_array - target
     mask = diff <= -1

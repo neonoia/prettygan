@@ -60,7 +60,9 @@ class Generator(nn.Module):
             in_features = out_features
 
         self.src_d = nn.Sequential(*downsampling)
-        self.ref_d = nn.Sequential(*downsampling)
+        self.ref_e = nn.Sequential(*downsampling)
+        self.ref_f = nn.Sequential(*downsampling)
+        self.ref_l = nn.Sequential(*downsampling)
 
         # Residual blocks
         res_block = []
@@ -99,9 +101,9 @@ class Generator(nn.Module):
 
     def forward(self, src, ref_e, ref_l, ref_f):
         src_1 = self.src_d(src)
-        ref_1 = self.ref_d(ref_e)
-        ref_2 = self.ref_d(ref_l)
-        ref_3 = self.ref_d(ref_f)
+        ref_1 = self.ref_e(ref_e)
+        ref_2 = self.ref_f(ref_l)
+        ref_3 = self.ref_l(ref_f)
         input_res = torch.cat([src_1, ref_1, ref_2, ref_3], 1)
         output_res = self.res_block(input_res)
         out = self.src_u(output_res)

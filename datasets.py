@@ -24,6 +24,7 @@ class ImageDataset(Dataset):
         self.files_A_mask_eyes = sorted(glob.glob(os.path.join(root, "%s/non-makup" % "eyes") + "/*.*"))
         self.files_A_mask_lips = sorted(glob.glob(os.path.join(root, "%s/non-makup" % "lips") + "/*.*"))
         self.files_A_mask_face = sorted(glob.glob(os.path.join(root, "%s/non-makup" % "face") + "/*.*"))
+        self.files_A_mask_bg = sorted(glob.glob(os.path.join(root, "%s/non-makup" % "background") + "/*.*"))
 
         self.files_B_mask_eyes = sorted(glob.glob(os.path.join(root, "%s/makeup" % "eyes") + "/*.*"))
         self.files_B_mask_lips = sorted(glob.glob(os.path.join(root, "%s/makeup" % "lips") + "/*.*"))
@@ -35,6 +36,7 @@ class ImageDataset(Dataset):
         image_A_mask_eyes = Image.open(self.files_A_mask_eyes[idx_A])
         image_A_mask_lips = Image.open(self.files_A_mask_lips[idx_A])
         image_A_mask_face = Image.open(self.files_A_mask_face[idx_A])
+        image_A_mask_bg = Image.open(self.files_A_mask_bg[idx_A])
 
         # File B - Eyes
         idx = random.randint(0, len(self.files_B) - 1)
@@ -69,11 +71,12 @@ class ImageDataset(Dataset):
         item_A_mask_eyes = self.transform(image_A_mask_eyes)
         item_A_mask_lips = self.transform(image_A_mask_lips)
         item_A_mask_face = self.transform(image_A_mask_face)
+        item_A_mask_bg = self.transform(image_A_mask_bg)
 
         item_B_mask = self.transform(image_B_mask)
         item_C_mask = self.transform(image_C_mask)
         item_D_mask = self.transform(image_D_mask)
-        return {"A": item_A, "B": item_B, "C": item_C, "D": item_D, \
+        return {"A": item_A, "B": item_B, "C": item_C, "D": item_D, "A_mask_bg": item_A_mask_bg, \
             "A_mask_eyes": item_A_mask_eyes, "A_mask_lips": item_A_mask_lips, "A_mask_face": item_A_mask_face, \
             "B_mask": item_B_mask, "C_mask": item_C_mask, "D_mask": item_D_mask}
 
